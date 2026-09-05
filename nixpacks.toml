@@ -1,0 +1,18 @@
+[phases.setup]
+nixPkgs = ["curl"]
+
+[phases.install]
+cmds = ["npm ci", "npm --prefix dashboard ci"]
+
+[phases.build]
+cmds = ["npm --prefix dashboard run build"]
+
+[start]
+cmd = "npx tsx bot-with-dashboard.ts"
+
+[variables]
+NODE_ENV = "production"
+HOST = "0.0.0.0"
+PORT = "3001"
+DATA_DIR = "/data"
+DRY_RUN = "true"

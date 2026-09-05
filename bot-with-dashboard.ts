@@ -1005,14 +1005,17 @@ async function setupPortfolioManager(sdk: PolymarketSDK) {
 }
 
 async function main() {
-  console.clear();
+  if (process.stdout.isTTY) {
+    console.clear();
+  }
   console.log('╔════════════════════════════════════════════════════════════════════╗');
   console.log('║          POLYMARKET BOT v3.0 + DASHBOARD                           ║');
   console.log('╚════════════════════════════════════════════════════════════════════╝\n');
 
-  // Start Dashboard Server
-  startDashboard(3001);
-  console.log('\n🌐 Dashboard: http://localhost:3001\n');
+  // Start Dashboard Server (PORT/HOST come from env in Docker/Coolify)
+  const port = Number(process.env.PORT || 3001);
+  startDashboard(port);
+  console.log(`\n🌐 Dashboard: http://0.0.0.0:${port}\n`);
 
   if (!process.env.POLYMARKET_PRIVATE_KEY) {
     log('ERROR', 'POLYMARKET_PRIVATE_KEY not found');

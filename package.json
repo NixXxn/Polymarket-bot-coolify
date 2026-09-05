@@ -32,7 +32,9 @@
     "example:ctf": "tsx examples/10-ctf-operations.ts",
     "example:live-arb": "tsx examples/11-live-arbitrage-scan.ts",
     "example:trending-arb": "tsx examples/12-trending-arb-monitor.ts",
-    "example:arb-service": "tsx examples/13-arbitrage-service.ts"
+    "example:arb-service": "tsx examples/13-arbitrage-service.ts",
+    "start": "tsx bot-with-dashboard.ts",
+    "build:dashboard": "npm --prefix dashboard ci && npm --prefix dashboard run build"
   },
   "keywords": [
     "polymarket",
@@ -43,6 +45,9 @@
     "smart-money"
   ],
   "author": "Catalyst Team",
+  "engines": {
+    "node": ">=20"
+  },
   "files": [
     "dist",
     "README.md",
@@ -60,10 +65,10 @@
     "dotenv": "^17.2.3",
     "ethers": "5",
     "isomorphic-ws": "^5.0.0",
+    "tsx": "^4.7.0",
     "ws": "^8.18.3"
   },
   "devDependencies": {
-    "tsx": "^4.7.0",
     "typescript": "^5.7.2",
     "vitest": "^2.1.8"
   }

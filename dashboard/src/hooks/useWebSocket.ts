@@ -6,10 +6,15 @@ interface WebSocketMessage {
   payload: unknown;
 }
 
-// Connect to same host:port when served by bot, or port 3001 for dev
-const WS_URL = window.location.port === '5173'
-  ? `ws://${window.location.hostname}:3001`
-  : `ws://${window.location.host}`;
+function dashboardWsUrl(): string {
+  const { protocol, hostname, port, host } = window.location;
+  if (port === '5173') {
+    return `ws://${hostname}:3001`;
+  }
+  return `${protocol === 'https:' ? 'wss' : 'ws'}://${host}`;
+}
+
+const WS_URL = dashboardWsUrl();
 const MAX_LOGS = 200;
 
 export function useWebSocket() {

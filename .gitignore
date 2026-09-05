@@ -1,8 +1,13 @@
 # Dependencies
 node_modules/
+dashboard/node_modules/
 
 # Build output
 dist/
+dashboard/dist/
+
+# Persistent bot data
+data/
 
 # Environment variables
 .env

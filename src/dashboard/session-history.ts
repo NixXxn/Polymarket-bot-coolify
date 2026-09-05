@@ -4,7 +4,7 @@
  */
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
-import { join, dirname } from 'path';
+import { join, dirname, resolve } from 'path';
 import { fileURLToPath } from 'url';
 
 const __filename = fileURLToPath(import.meta.url);
@@ -75,8 +75,10 @@ export interface HistoryData {
   overallWinRate: number;
 }
 
-// History file path
-const DATA_DIR = join(__dirname, '../../data');
+// History file path (DATA_DIR is bind-mounted to /data in Docker/Coolify)
+const DATA_DIR = process.env.DATA_DIR
+  ? resolve(process.env.DATA_DIR)
+  : join(__dirname, '../../data');
 const HISTORY_FILE = join(DATA_DIR, 'session-history.json');
 
 /**

@@ -30,7 +30,9 @@ function broadcast(message: WebSocketMessage): void {
   });
 }
 
-export function startDashboard(port = 3001): http.Server {
+export function startDashboard(port = Number(process.env.PORT || 3001)): http.Server {
+  const host = process.env.HOST || '0.0.0.0';
+
   server = http.createServer((req, res) => {
     // CORS headers
     res.setHeader('Access-Control-Allow-Origin', '*');
@@ -176,9 +178,9 @@ export function startDashboard(port = 3001): http.Server {
     broadcast({ type: 'config', payload: config });
   });
 
-  server.listen(port, () => {
-    console.log(`[Dashboard] Server running at http://localhost:${port}`);
-    console.log(`[Dashboard] WebSocket at ws://localhost:${port}`);
+  server.listen(port, host, () => {
+    console.log(`[Dashboard] Server listening on http://${host}:${port}`);
+    console.log(`[Dashboard] WebSocket on ws://${host}:${port}`);
   });
 
   return server;

@@ -7,6 +7,18 @@
 
 **Created by**: [@Mr_CryptoYT](https://x.com/Mr_CryptoYT)
 
+## Coolify (one-click Git import)
+
+This fork is ready to import in [Coolify](https://coolify.io): Dockerfile, Compose file, health check on `/health`, and a persistent `/data` volume.
+
+1. In Coolify: **New Resource** → **Public Repository** → `https://github.com/NixXxn/Polymarket-bot-coolify`
+2. **Build Pack**: Docker Compose (file `/docker-compose.yaml`)
+3. Attach a domain to the `bot` service (port **3001**)
+4. Set env from [`.env.example`](.env.example) — at least `POLYMARKET_PRIVATE_KEY`. Keep `DRY_RUN=true` until you have verified the dashboard.
+5. Deploy. Open `https://your-domain/health` — you should see `{"status":"ok",...}`.
+
+Full steps: [DEPLOY.md](DEPLOY.md).
+
 ## 🆕 What's New in v3.1 (January 2026)
 
 ### 🔴 **Professional-Grade Risk Management**
@@ -27,15 +39,16 @@ This guide will take you **from A to Z** on how to set up, configure, and run yo
 
 ## 📋 Table of Contents
 
-1. [Prerequisites](#prerequisites)
-2. [Installation](#installation)
-3. [Configuration](#configuration)
-4. [Running the Bot](#running-the-bot)
-5. [Dashboard Guide](#dashboard-guide)
-6. [Risk Management](#risk-management)
-7. [Strategies Explained](#strategies-explained)
-8. [Troubleshooting](#troubleshooting)
-9. [Safety & Risks](#safety--risks)
+1. [Coolify (one-click Git import)](#coolify-one-click-git-import)
+2. [Prerequisites](#prerequisites)
+3. [Installation](#installation)
+4. [Configuration](#configuration)
+5. [Running the Bot](#running-the-bot)
+6. [Dashboard Guide](#dashboard-guide)
+7. [Risk Management](#risk-management)
+8. [Strategies Explained](#strategies-explained)
+9. [Troubleshooting](#troubleshooting)
+10. [Safety & Risks](#safety--risks)
 
 ---
 
@@ -70,8 +83,8 @@ Open your terminal (Command Prompt or PowerShell on Windows, Terminal on Mac) an
 Download the bot code to your computer.
 
 ```bash
-git clone https://github.com/MrFadiAi/Polymarket-bot.git
-cd Polymarket-bot
+git clone https://github.com/NixXxn/Polymarket-bot-coolify.git
+cd Polymarket-bot-coolify
 ```
 
 *(Note: If you downloaded the ZIP file instead, just unzip it and open the folder in your terminal)*
