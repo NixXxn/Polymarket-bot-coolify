@@ -14,6 +14,7 @@ import { WebSocketServer, WebSocket } from 'ws';
 import { dashboardEmitter } from './state-emitter.js';
 import type { WebSocketMessage } from './types.js';
 import { loadHistory, getSession, getHistorySummary } from './session-history.js';
+import { getServerTimeInfo } from './server-time.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -93,7 +94,11 @@ export function startDashboard(port = Number(process.env.PORT || 3001)): http.Se
 
     if (url.pathname === '/health') {
       res.writeHead(200, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ status: 'ok', uptime: process.uptime() }));
+      res.end(JSON.stringify({
+        status: 'ok',
+        uptime: process.uptime(),
+        ...getServerTimeInfo(),
+      }));
       return;
     }
 

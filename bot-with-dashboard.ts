@@ -20,11 +20,21 @@ import {
 import { CTFClient } from './src/clients/ctf-client.js';
 import { startDashboard, dashboardEmitter } from './src/dashboard/index.js';
 import type { BotState, BotConfig, LogLevel, DipArbSignal, SmartMoneySignal } from './src/dashboard/types.js';
+import { formatServerDateTime } from './src/dashboard/server-time.js';
 import { addSession, createSessionFromState, type TradeRecord } from './src/dashboard/session-history.js';
+import { PredictionHuntService } from './src/services/prediction-hunt-service.js';
+import { PredictionHuntError } from './src/clients/prediction-hunt-client.js';
 
 // ============================================================================
 // CONFIGURATION (same as bot-config.ts)
 // ============================================================================
+
+function envNumber(name: string, fallback: number): number {
+  const raw = process.env[name];
+  if (raw === undefined || raw === '') return fallback;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : fallback;
+}
 
 let CONFIG = {
   capital: {
@@ -62,11 +72,11 @@ let CONFIG = {
 
   smartMoney: {
     enabled: process.env.SMARTMONEY_ENABLED !== 'false',
-    topN: 20,
-    // 🔴 FIXED: Stricter criteria (v3.1)
-    minWinRate: 0.60,  // Up from 0.70 to match bot-config (60%+)
-    minPnl: 500,       // Up from 70 to $500
-    minTrades: 30,     // Up from 15 to 30
+    topN: envNumber('SMARTMONEY_TOP_N', 50),
+    maxWallets: envNumber('SMARTMONEY_MAX_WALLETS', 25),
+    minWinRate: envNumber('SMARTMONEY_MIN_WIN_RATE', 0.60),
+    minPnl: envNumber('SMARTMONEY_MIN_PNL', 500),
+    minTrades: envNumber('SMARTMONEY_MIN_TRADES', 30),
 
     // 🔴 NEW: Quality filters
     minProfitFactor: 1.5,  // Total wins / total losses >= 1.5x
@@ -137,6 +147,14 @@ let CONFIG = {
   },
 
   dryRun: process.env.DRY_RUN !== 'false',
+
+  predictionHunt: {
+    enabled: process.env.PREDICTION_HUNT_ENABLED !== 'false',
+    pollMs: envNumber('PREDICTION_HUNT_POLL_MS', 15 * 60 * 1000),
+    arbMinRoi: envNumber('PREDICTION_HUNT_ARB_MIN_ROI', 0.5),
+    evMinRoi: envNumber('PREDICTION_HUNT_EV_MIN_ROI', 1),
+    limit: envNumber('PREDICTION_HUNT_LIMIT', 50),
+  },
 };
 
 // ============================================================================
@@ -205,6 +223,16 @@ const state: BotState = {
   },
 
   smartMoneySignals: [],
+
+  predictionHunt: {
+    status: 'disabled',
+    error: null,
+    lastScan: null,
+    arbCount: 0,
+    evCount: 0,
+    arb: [],
+    ev: [],
+  },
 };
 
 // ============================================================================
@@ -212,7 +240,7 @@ const state: BotState = {
 // ============================================================================
 
 function log(level: LogLevel, message: string, data?: unknown) {
-  const timestamp = new Date().toISOString();
+  const timestamp = formatServerDateTime();
   const icons: Record<string, string> = {
     INFO: '📋', WARN: '⚠️', ERROR: '❌', TRADE: '💰', SIGNAL: '🎯',
     ARB: '🔄', WALLET: '👛', CHAIN: '⛓️', SWAP: '💱', BRIDGE: '🌉',
@@ -229,6 +257,44 @@ function log(level: LogLevel, message: string, data?: unknown) {
 
 function updateDashboard() {
   dashboardEmitter.updateState(state);
+}
+
+function snapshotConfig(): BotConfig {
+  return {
+    capital: CONFIG.capital,
+    risk: CONFIG.risk,
+    smartMoney: {
+      enabled: CONFIG.smartMoney.enabled,
+      topN: CONFIG.smartMoney.topN,
+      maxWallets: CONFIG.smartMoney.maxWallets,
+      minWinRate: CONFIG.smartMoney.minWinRate,
+      minPnl: CONFIG.smartMoney.minPnl,
+      minTrades: CONFIG.smartMoney.minTrades,
+      customWallets: CONFIG.smartMoney.customWallets,
+    },
+    arbitrage: {
+      enabled: CONFIG.arbitrage.enabled,
+      profitThreshold: CONFIG.arbitrage.profitThreshold,
+      autoExecute: CONFIG.arbitrage.autoExecute,
+    },
+    dipArb: {
+      enabled: CONFIG.dipArb.enabled,
+      coins: CONFIG.dipArb.coins,
+    },
+    directTrading: {
+      enabled: CONFIG.directTrading.enabled,
+    },
+    binance: {
+      enabled: CONFIG.binance.enabled,
+    },
+    predictionHunt: {
+      enabled: CONFIG.predictionHunt.enabled,
+      pollMs: CONFIG.predictionHunt.pollMs,
+      arbMinRoi: CONFIG.predictionHunt.arbMinRoi,
+      evMinRoi: CONFIG.predictionHunt.evMinRoi,
+    },
+    dryRun: CONFIG.dryRun,
+  };
 }
 
 // 🔴 FIXED: v3.1 Multi-layer risk management
@@ -356,6 +422,7 @@ function simulateTrade(profit: number, strategy: string, description: string) {
 // ============================================================================
 
 let arbService: ArbitrageService | null = null;
+let huntService: PredictionHuntService | null = null;
 let isSmartMoneyInitialized = false;
 let isSmartMoneyInitializing = false;
 
@@ -369,49 +436,75 @@ async function initializeSmartMoney(sdk: PolymarketSDK) {
   if (isSmartMoneyInitialized || isSmartMoneyInitializing) return;
   isSmartMoneyInitializing = true;
 
-  log('WALLET', 'Setting up Smart Money with quality filtering...');
+  log('WALLET', `Setting up Smart Money (max ${CONFIG.smartMoney.maxWallets} wallets, scan top ${CONFIG.smartMoney.topN} week+month)...`);
 
   const qualified: string[] = [];
+  const seen = new Set<string>();
+  const skipped = { winRate: 0, pnl: 0, trades: 0, noProfile: 0 };
 
   if (CONFIG.smartMoney.customWallets?.length > 0) {
     for (const wallet of CONFIG.smartMoney.customWallets) {
+      const key = wallet.toLowerCase();
+      if (seen.has(key)) continue;
+      seen.add(key);
       qualified.push(wallet);
       log('WALLET', `⭐ Custom wallet added: ${wallet.slice(0, 10)}...`);
     }
   }
 
-  try {
-    const leaderboard = await sdk.wallets.getLeaderboardByPeriod('week', CONFIG.smartMoney.topN * 2, 'pnl');
+  const periods = ['week', 'month'] as const;
 
-    for (const entry of leaderboard) {
-      // Check if disabled mid-process to abort early
-      if (!CONFIG.smartMoney.enabled && qualified.length === 0) break;
+  for (const period of periods) {
+    if (qualified.length >= CONFIG.smartMoney.maxWallets) break;
+    if (!CONFIG.smartMoney.enabled && qualified.length === 0) break;
 
-      if (qualified.length >= 10) break; // User limit: Max 10 qualified wallets
-      if (qualified.includes(entry.address)) continue;
+    try {
+      log('WALLET', `Scanning ${period} leaderboard (top ${CONFIG.smartMoney.topN})...`);
+      const leaderboard = await sdk.wallets.getLeaderboardByPeriod(
+        period,
+        CONFIG.smartMoney.topN,
+        'pnl'
+      );
 
-      const profile = await sdk.wallets.getWalletProfile(entry.address);
-      if (!profile) continue;
+      for (const entry of leaderboard) {
+        if (!CONFIG.smartMoney.enabled && qualified.length === 0) break;
+        if (qualified.length >= CONFIG.smartMoney.maxWallets) break;
 
-      const winRate = (profile as any).winRate ?? 0;
-      const pnl = entry.pnl ?? 0;
-      const trades = profile.tradeCount ?? 0;
+        const key = entry.address.toLowerCase();
+        if (seen.has(key)) continue;
+        seen.add(key);
 
-      if (winRate >= CONFIG.smartMoney.minWinRate &&
-        pnl >= CONFIG.smartMoney.minPnl &&
-        trades >= CONFIG.smartMoney.minTrades) {
-        qualified.push(entry.address);
-        log('WALLET', `✅ Qualified: ${entry.address.slice(0, 10)}... (WR:${(winRate * 100).toFixed(0)}% PnL:$${pnl.toFixed(0)} T:${trades})`);
+        const profile = await sdk.wallets.getWalletProfile(entry.address);
+        if (!profile) {
+          skipped.noProfile++;
+          await new Promise(r => setTimeout(r, 200));
+          continue;
+        }
+
+        const winRate = (profile as any).winRate ?? 0;
+        const pnl = entry.pnl ?? 0;
+        const trades = profile.tradeCount ?? entry.tradeCount ?? 0;
+
+        if (winRate < CONFIG.smartMoney.minWinRate) {
+          skipped.winRate++;
+        } else if (pnl < CONFIG.smartMoney.minPnl) {
+          skipped.pnl++;
+        } else if (trades < CONFIG.smartMoney.minTrades) {
+          skipped.trades++;
+        } else {
+          qualified.push(entry.address);
+          log('WALLET', `✅ Qualified (${period}): ${entry.address.slice(0, 10)}... (WR:${(winRate * 100).toFixed(0)}% PnL:$${pnl.toFixed(0)} T:${trades})`);
+        }
+
+        await new Promise(r => setTimeout(r, 200));
       }
-
-      await new Promise(r => setTimeout(r, 300));
+    } catch (err) {
+      log('WARN', `${period} leaderboard error: ${(err as Error).message}`);
     }
-  } catch (err) {
-    log('WARN', `Leaderboard error: ${(err as Error).message}`);
   }
 
   state.followedWallets = qualified;
-  log('WALLET', `Following ${qualified.length} wallets`);
+  log('WALLET', `Following ${qualified.length}/${CONFIG.smartMoney.maxWallets} wallets (skipped WR:${skipped.winRate} PnL:${skipped.pnl} trades:${skipped.trades} no-profile:${skipped.noProfile})`);
   updateDashboard();
 
   if (qualified.length > 0) {
@@ -537,6 +630,80 @@ async function setupArbitrage(_sdk: PolymarketSDK) {
       log('WARN', `Arbitrage scan error: ${(err as Error).message}`);
       updateDashboard();
     }
+  }
+}
+
+async function setupPredictionHunt() {
+  huntService?.stop();
+  huntService = null;
+
+  const apiKey = process.env.PREDICTION_HUNT_API_KEY?.trim();
+  if (!CONFIG.predictionHunt.enabled) {
+    state.predictionHunt.status = 'disabled';
+    log('INFO', 'Prediction Hunt disabled');
+    updateDashboard();
+    return;
+  }
+  if (!apiKey) {
+    state.predictionHunt.status = 'error';
+    state.predictionHunt.error = 'PREDICTION_HUNT_API_KEY is missing';
+    log('WARN', 'Prediction Hunt: no API key (set PREDICTION_HUNT_API_KEY)');
+    updateDashboard();
+    return;
+  }
+
+  huntService = new PredictionHuntService({
+    apiKey,
+    apiUrl: process.env.PREDICTION_HUNT_API_URL,
+    pollMs: CONFIG.predictionHunt.pollMs,
+    arbMinRoi: CONFIG.predictionHunt.arbMinRoi,
+    evMinRoi: CONFIG.predictionHunt.evMinRoi,
+    limit: CONFIG.predictionHunt.limit,
+  });
+
+  huntService.on('scanning', () => {
+    state.predictionHunt.status = 'scanning';
+    updateDashboard();
+  });
+
+  huntService.on('update', ({ arb, ev, asOf }: { arb: any[]; ev: any[]; asOf: string }) => {
+    state.predictionHunt = {
+      status: 'live',
+      error: null,
+      lastScan: asOf,
+      arbCount: arb.length,
+      evCount: ev.length,
+      arb,
+      ev,
+    };
+    const polyArb = arb.filter((a) => a.polymarket).length;
+    const polyEv = ev.filter((e) => e.polymarket).length;
+    log('ARB', `Hunt scan: ${arb.length} arbs (${polyArb} Polymarket), ${ev.length} +EV (${polyEv} Polymarket)`);
+    for (const item of ev.filter((e) => e.polymarket).slice(0, 5)) {
+      log('SIGNAL', `+EV ${item.bestRoiPct.toFixed(2)}% ${item.title}`, { legs: item.legs });
+    }
+    for (const item of arb.filter((a) => a.polymarket).slice(0, 5)) {
+      log('ARB', `X-platform arb ${item.roiPct.toFixed(2)}% ${item.title}`, { legs: item.legs });
+    }
+    updateDashboard();
+  });
+
+  huntService.on('error', (err: unknown) => {
+    const message = err instanceof Error ? err.message : String(err);
+    const blocked = err instanceof PredictionHuntError && err.isTierBlocked;
+    state.predictionHunt.status = 'error';
+    state.predictionHunt.error = blocked
+      ? `${message} — /v2/arb and /v2/ev need a Dev or Pro Prediction Hunt key.`
+      : message;
+    log('WARN', `Prediction Hunt: ${state.predictionHunt.error}`);
+    updateDashboard();
+  });
+
+  log('INFO', `Prediction Hunt starting (poll every ${Math.round(CONFIG.predictionHunt.pollMs / 1000)}s)`);
+  try {
+    await huntService.start();
+  } catch {
+    // error event already logged
   }
 }
 
@@ -1023,34 +1190,7 @@ async function main() {
   }
 
   // Send config to dashboard
-  const dashboardConfig: BotConfig = {
-    capital: CONFIG.capital,
-    risk: CONFIG.risk,
-    smartMoney: {
-      enabled: CONFIG.smartMoney.enabled,
-      topN: CONFIG.smartMoney.topN,
-      minWinRate: CONFIG.smartMoney.minWinRate,
-      minPnl: CONFIG.smartMoney.minPnl,
-      minTrades: CONFIG.smartMoney.minTrades,
-      customWallets: CONFIG.smartMoney.customWallets,
-    },
-    arbitrage: {
-      enabled: CONFIG.arbitrage.enabled,
-      profitThreshold: CONFIG.arbitrage.profitThreshold,
-      autoExecute: CONFIG.arbitrage.autoExecute,
-    },
-    dipArb: {
-      enabled: CONFIG.dipArb.enabled,
-      coins: CONFIG.dipArb.coins,
-    },
-    directTrading: {
-      enabled: CONFIG.directTrading.enabled,
-    },
-    binance: {
-      enabled: CONFIG.binance.enabled,
-    },
-    dryRun: CONFIG.dryRun,
-  };
+  const dashboardConfig: BotConfig = snapshotConfig();
   dashboardEmitter.updateConfig(dashboardConfig);
   dashboardEmitter.updateState(state);
 
@@ -1099,17 +1239,7 @@ async function main() {
         });
 
         // Emit new config to dashboard
-        const newDashboardConfig: BotConfig = {
-          capital: CONFIG.capital,
-          risk: CONFIG.risk,
-          smartMoney: { ...CONFIG.smartMoney },
-          arbitrage: { ...CONFIG.arbitrage },
-          dipArb: { ...CONFIG.dipArb },
-          directTrading: { ...CONFIG.directTrading },
-          binance: { ...CONFIG.binance },
-          dryRun: CONFIG.dryRun,
-        };
-        dashboardEmitter.updateConfig(newDashboardConfig);
+        dashboardEmitter.updateConfig(snapshotConfig());
 
         log('WARN', `⚠️ BOT MODE CHANGED TO: ${CONFIG.dryRun ? '🧪 DRY RUN' : '🔴 LIVE'}`);
       }
@@ -1141,6 +1271,7 @@ async function main() {
   await setupBinanceAnalysis(sdk);
   await setupSmartMoney(sdk);
   await setupArbitrage(sdk);
+  await setupPredictionHunt();
   await setupDipArb(sdk);
 
   // Periodic state update
@@ -1277,6 +1408,15 @@ async function main() {
             } else {
               log('INFO', `Smart Money monitoring disabled.`);
             }
+          } else if (strategy === 'predictionHunt') {
+            if (enabled) {
+              await setupPredictionHunt();
+            } else {
+              huntService?.stop();
+              state.predictionHunt.status = 'disabled';
+              log('INFO', 'Prediction Hunt stopped');
+              updateDashboard();
+            }
           } else if (strategy === 'directTrading') {
             if (enabled) {
               log('INFO', `Triggering Direct Trading analysis...`);
@@ -1292,36 +1432,7 @@ async function main() {
         }
 
         // Broadcast updated config to dashboard
-        const dashboardConfig: BotConfig = {
-          // ... (rest of config mapping)
-          capital: CONFIG.capital,
-          risk: CONFIG.risk,
-          smartMoney: {
-            enabled: CONFIG.smartMoney.enabled,
-            topN: CONFIG.smartMoney.topN,
-            minWinRate: CONFIG.smartMoney.minWinRate,
-            minPnl: CONFIG.smartMoney.minPnl,
-            minTrades: CONFIG.smartMoney.minTrades,
-            customWallets: CONFIG.smartMoney.customWallets,
-          },
-          arbitrage: {
-            enabled: CONFIG.arbitrage.enabled,
-            profitThreshold: CONFIG.arbitrage.profitThreshold,
-            autoExecute: CONFIG.arbitrage.autoExecute,
-          },
-          dipArb: {
-            enabled: CONFIG.dipArb.enabled,
-            coins: CONFIG.dipArb.coins,
-          },
-          directTrading: {
-            enabled: CONFIG.directTrading.enabled,
-          },
-          binance: {
-            enabled: CONFIG.binance.enabled,
-          },
-          dryRun: CONFIG.dryRun,
-        };
-        dashboardEmitter.updateConfig(dashboardConfig);
+        dashboardEmitter.updateConfig(snapshotConfig());
       } else {
         log('WARN', `Unknown strategy: ${strategy}`);
       }
@@ -1377,6 +1488,7 @@ async function main() {
   process.on('SIGINT', async () => {
     console.log('\n\nShutting down...');
     if (arbService) await arbService.stop();
+    huntService?.stop();
     await sdk.dipArb.stop();
     sdk.stop();
     process.exit(0);
@@ -1403,6 +1515,7 @@ async function main() {
     console.log('  STRATEGIES:');
     console.log(`    Smart Money:  ${state.smartMoneyTrades} trades | ${state.followedWallets.length} wallets`);
     console.log(`    Arbitrage:    ${state.arbTrades} trades`);
+    console.log(`    Hunt +EV/arb: ${state.predictionHunt.evCount} edges / ${state.predictionHunt.arbCount} arbs (${state.predictionHunt.status})`);
     console.log(`    DipArb:       ${state.dipArbTrades} trades`);
     console.log('═'.repeat(70) + '\n');
   }

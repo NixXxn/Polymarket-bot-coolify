@@ -88,8 +88,11 @@ export function ConfigPanel({ config }: ConfigPanelProps) {
             </div>
             <div className="bg-poly-dark/50 rounded-xl p-4 space-y-1 divide-y divide-white/5">
               <ConfigItem label="Smart Money" value={config.smartMoney?.enabled ?? false} type="boolean" />
+              <ConfigItem label="Max wallets" value={config.smartMoney?.maxWallets ?? 25} type="number" />
+              <ConfigItem label="Scan top N" value={config.smartMoney?.topN ?? 50} type="number" />
               <ConfigItem label="Arbitrage" value={config.arbitrage?.enabled ?? false} type="boolean" />
               <ConfigItem label="DipArb" value={config.dipArb?.enabled ?? false} type="boolean" />
+              <ConfigItem label="Prediction Hunt" value={config.predictionHunt?.enabled ?? false} type="boolean" />
               <ConfigItem label="Direct Trading" value={config.directTrading?.enabled ?? false} type="boolean" />
             </div>
           </div>

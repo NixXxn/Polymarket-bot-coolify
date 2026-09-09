@@ -11,6 +11,7 @@ This repo is set up for a **Git import** in Coolify. Prefer the **Docker Compose
 5. Assign a domain to the `bot` service (Coolify proxy + HTTPS).
 6. **Environment** — paste from [`.env.example`](.env.example). Required:
    - `POLYMARKET_PRIVATE_KEY`
+   - `PREDICTION_HUNT_API_KEY` (Dev/Pro key for `/v2/arb` and `/v2/ev`)
    - leave `DRY_RUN=true` until you have tested the dashboard
 7. Deploy.
 
@@ -56,6 +57,8 @@ Compose already mounts volume `bot-data` → `/data`. For a Dockerfile resource,
 | `PORT` | `3001` | Must match Coolify “ports exposes” / domain port |
 | `HOST` | `0.0.0.0` | Required behind Coolify’s proxy |
 | `DATA_DIR` | `/data` | Keep this on a volume |
+| `PREDICTION_HUNT_API_KEY` | (none) | `pmx_...` key. `/v2/arb` and `/v2/ev` need Dev or Pro |
+| `PREDICTION_HUNT_POLL_MS` | `900000` | Scan interval (15 min). Dev quota is 500 arb + 500 EV / month |
 
 Enable Coolify **HTTP Basic Auth** (or equivalent) on the domain. The dashboard has no built-in login.
 

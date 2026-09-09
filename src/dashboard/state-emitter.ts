@@ -13,6 +13,7 @@
 
 import { EventEmitter } from 'events';
 import type { BotState, BotConfig, LogEntry, LogLevel } from './types.js';
+import { getServerTimeInfo } from './server-time.js';
 
 class DashboardEmitter extends EventEmitter {
   private state: BotState | null = null;
@@ -78,6 +79,7 @@ class DashboardEmitter extends EventEmitter {
       state: this.state,
       config: this.config,
       logs: this.logs,
+      server: getServerTimeInfo(),
     };
   }
 

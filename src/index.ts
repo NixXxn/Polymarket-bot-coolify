@@ -77,6 +77,21 @@ export type {
 } from './clients/subgraph.js';
 
 // Services
+export { PredictionHuntClient, PredictionHuntError, isPolymarketPlatform } from './clients/prediction-hunt-client.js';
+export type {
+  HuntArbOpportunity,
+  HuntEvOpportunity,
+  HuntArbResponse,
+  HuntEvResponse,
+} from './clients/prediction-hunt-client.js';
+
+export { PredictionHuntService } from './services/prediction-hunt-service.js';
+export type {
+  HuntArbSignal,
+  HuntEvSignal,
+  HuntLegView,
+} from './services/prediction-hunt-service.js';
+
 export { WalletService } from './services/wallet-service.js';
 export type {
   WalletProfile,

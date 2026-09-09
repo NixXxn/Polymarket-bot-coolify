@@ -24,6 +24,50 @@ export interface SmartMoneySignal {
   price: number;
 }
 
+export interface HuntLegView {
+  side: string;
+  platform: string;
+  marketId: string;
+  sourceUrl?: string;
+  price: number;
+  liquidityUsd?: number;
+  roiPct?: number;
+  evUsdPerDollar?: number;
+}
+
+export interface HuntArbSignal {
+  id: string;
+  title: string;
+  eventDate?: string;
+  roiPct: number;
+  totalCost: number;
+  maxWagerUsd?: number;
+  detectedAt?: string;
+  polymarket: boolean;
+  legs: HuntLegView[];
+}
+
+export interface HuntEvSignal {
+  id: string;
+  title: string;
+  eventDate?: string;
+  consensus: number;
+  detectedAt?: string;
+  polymarket: boolean;
+  bestRoiPct: number;
+  legs: HuntLegView[];
+}
+
+export interface HuntState {
+  status: 'idle' | 'scanning' | 'live' | 'error' | 'disabled';
+  error?: string | null;
+  lastScan?: string | null;
+  arbCount: number;
+  evCount: number;
+  arb: HuntArbSignal[];
+  ev: HuntEvSignal[];
+}
+
 export interface BotState {
   startTime: number;
   dailyPnL: number;
@@ -78,6 +122,9 @@ export interface BotState {
   // Smart Money signals
   smartMoneySignals?: SmartMoneySignal[];
 
+  // Prediction Hunt
+  predictionHunt?: HuntState;
+
   // Portfolio Sync (positions)
   positions?: any[];
 }
@@ -104,6 +151,7 @@ export interface BotConfig {
   smartMoney: {
     enabled: boolean;
     topN: number;
+    maxWallets?: number;
     minWinRate: number;
     minPnl: number;
     minTrades: number;
@@ -123,6 +171,12 @@ export interface BotConfig {
   };
   binance: {
     enabled: boolean;
+  };
+  predictionHunt?: {
+    enabled: boolean;
+    pollMs: number;
+    arbMinRoi: number;
+    evMinRoi: number;
   };
   dryRun: boolean;
 }
@@ -153,6 +207,11 @@ export interface DashboardData {
   state: BotState | null;
   config: BotConfig | null;
   logs: LogEntry[];
+  server?: {
+    timeZone: string;
+    timeZoneName: string;
+    now: string;
+  };
 }
 
 // ============= Session History Types =============

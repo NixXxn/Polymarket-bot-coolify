@@ -17,6 +17,7 @@ import {
   SessionSummary,
   HistoryPage,
   PositionsPage,
+  PredictionHuntPanel,
   StrategyControls,
 } from './components';
 
@@ -24,7 +25,7 @@ type Page = 'dashboard' | 'history' | 'positions';
 
 function App() {
   const [currentPage, setCurrentPage] = useState<Page>('dashboard');
-  const { state, config, logs, connected, error, sendCommand } = useWebSocket();
+  const { state, config, logs, timeZone, timeZoneName, connected, error, sendCommand } = useWebSocket();
   const isDryRun = config?.dryRun ?? true;
 
   const handleClosePosition = (tokenId: string, size: number) => {
@@ -168,7 +169,7 @@ function App() {
         {/* Row 3: Smart Money (main) + Side Panel (Trends + Strategies + OnChain) */}
         <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
           <div className="lg:col-span-2">
-            <SmartMoneyPanel state={state} />
+            <SmartMoneyPanel state={state} timeZone={timeZone} />
           </div>
           <div className="space-y-3">
             <StrategyControls config={config} onToggle={handleToggleStrategy} />
@@ -178,8 +179,11 @@ function App() {
           </div>
         </div>
 
+        {/* Row 3b: Prediction Hunt edges + x-platform arb */}
+        <PredictionHuntPanel state={state} timeZone={timeZone} />
+
         {/* Row 4: Activity Log - Full Width at bottom */}
-        <ActivityLog logs={logs} />
+        <ActivityLog logs={logs} timeZone={timeZone} timeZoneName={timeZoneName} />
 
         {/* Config - Collapsible at bottom */}
         <details className="group">

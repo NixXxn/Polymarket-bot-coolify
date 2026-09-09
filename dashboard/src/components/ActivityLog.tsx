@@ -1,8 +1,12 @@
 import { useState, useMemo } from 'react';
 import type { LogEntry, LogLevel } from '../types';
+import { formatInTimeZone } from '../lib/time';
+import { ServerClock } from './ServerClock';
 
 interface ActivityLogProps {
   logs: LogEntry[];
+  timeZone?: string;
+  timeZoneName?: string;
 }
 
 const LOG_ICONS: Record<LogLevel, string> = {
@@ -46,7 +50,7 @@ const FILTER_OPTIONS: (LogLevel | 'ALL')[] = [
   'INFO',
 ];
 
-export function ActivityLog({ logs }: ActivityLogProps) {
+export function ActivityLog({ logs, timeZone = 'UTC', timeZoneName }: ActivityLogProps) {
   const [filter, setFilter] = useState<LogLevel | 'ALL'>('ALL');
   const [expanded, setExpanded] = useState<string | null>(null);
 
@@ -55,15 +59,7 @@ export function ActivityLog({ logs }: ActivityLogProps) {
     return logs.filter((log) => log.level === filter);
   }, [logs, filter]);
 
-  const formatTime = (timestamp: string) => {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    });
-  };
+  const formatTime = (timestamp: string) => formatInTimeZone(timestamp, timeZone);
 
   return (
     <div className="panel flex flex-col h-[450px]">
@@ -94,6 +90,8 @@ export function ActivityLog({ logs }: ActivityLogProps) {
           ))}
         </div>
       </div>
+
+      <ServerClock timeZone={timeZone} timeZoneName={timeZoneName} />
 
       <div className="flex-1 overflow-y-auto p-3 space-y-2">
         {filteredLogs.length === 0 ? (

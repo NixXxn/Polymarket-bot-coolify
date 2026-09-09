@@ -21,6 +21,8 @@ export function useWebSocket() {
   const [state, setState] = useState<BotState | null>(null);
   const [config, setConfig] = useState<BotConfig | null>(null);
   const [logs, setLogs] = useState<LogEntry[]>([]);
+  const [timeZone, setTimeZone] = useState('UTC');
+  const [timeZoneName, setTimeZoneName] = useState('UTC');
   const [connected, setConnected] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const wsRef = useRef<WebSocket | null>(null);
@@ -48,6 +50,8 @@ export function useWebSocket() {
               if (data.state) setState(data.state);
               if (data.config) setConfig(data.config);
               if (data.logs) setLogs(data.logs.slice(0, MAX_LOGS));
+              if (data.server?.timeZone) setTimeZone(data.server.timeZone);
+              if (data.server?.timeZoneName) setTimeZoneName(data.server.timeZoneName);
               break;
             }
             case 'state':
@@ -110,5 +114,5 @@ export function useWebSocket() {
     }
   };
 
-  return { state, config, logs, connected, error, sendCommand };
+  return { state, config, logs, timeZone, timeZoneName, connected, error, sendCommand };
 }

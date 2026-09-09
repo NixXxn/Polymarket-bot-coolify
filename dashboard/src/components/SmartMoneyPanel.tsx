@@ -1,23 +1,17 @@
 import type { BotState } from '../types';
+import { formatInTimeZone } from '../lib/time';
 
 interface SmartMoneyPanelProps {
   state: BotState | null;
+  timeZone?: string;
 }
 
-export function SmartMoneyPanel({ state }: SmartMoneyPanelProps) {
+export function SmartMoneyPanel({ state, timeZone = 'UTC' }: SmartMoneyPanelProps) {
   const signals = state?.smartMoneySignals ?? [];
   const followedWallets = state?.followedWallets ?? [];
   const trades = state?.smartMoneyTrades ?? 0;
 
-  const formatTime = (timestamp: string) => {
-    const date = new Date(timestamp);
-    return date.toLocaleTimeString('en-US', {
-      hour: '2-digit',
-      minute: '2-digit',
-      second: '2-digit',
-      hour12: false,
-    });
-  };
+  const formatTime = (timestamp: string) => formatInTimeZone(timestamp, timeZone);
 
   const shortenAddress = (addr: string) => {
     return `${addr.slice(0, 6)}...${addr.slice(-4)}`;

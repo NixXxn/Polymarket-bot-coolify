@@ -62,6 +62,13 @@ export function StrategyControls({ config, onToggle }: StrategyControlsProps) {
             enabled: config.dipArb?.enabled ?? false,
         },
         {
+            key: 'predictionHunt',
+            label: 'Prediction Hunt (Edge + Arb)',
+            icon: '🎯',
+            color: 'amber',
+            enabled: config.predictionHunt?.enabled ?? false,
+        },
+        {
             key: 'directTrading',
             label: 'Direct Trading (Trend Following)',
             icon: '📈',
