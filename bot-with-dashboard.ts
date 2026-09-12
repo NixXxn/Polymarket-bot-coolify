@@ -39,9 +39,10 @@ function envNumber(name: string, fallback: number): number {
 let CONFIG = {
   capital: {
     totalUsd: parseFloat(process.env.CAPITAL_USD || '250'),
-    maxPerTradePct: 0.02,  // 🔴 FIXED: Reduced from 3% to 2%
-    maxPerMarketPct: 0.10,
-    maxTotalExposurePct: 0.30,
+    maxPerTradePct: envNumber('MAX_PER_TRADE_PCT', 0.30),
+    maxPerMarketPct: envNumber('MAX_PER_TRADE_PCT', 0.30),
+    maxTotalExposurePct: 1,
+    maxOpenPositions: 0,
     minOrderUsd: 5,
     strategyAllocation: {
       smartMoney: 0.60,
@@ -64,8 +65,8 @@ let CONFIG = {
 
     // 🔴 NEW: Dynamic position sizing
     enableDynamicSizing: true,
-    minPositionPct: 0.01,  // 1% minimum
-    maxPositionPct: 0.05,  // 5% maximum
+    minPositionPct: 0.01,
+    maxPositionPct: envNumber('MAX_PER_TRADE_PCT', 0.30),
     lossSizingReduction: 0.20,  // Reduce 20% per loss
     winSizingIncrease: 0.10,  // Increase 10% per win
   },
@@ -85,9 +86,9 @@ let CONFIG = {
     checkLastNTrades: 10,  // Analyze last 10 trades
 
     sizeScale: 0.1,
-    maxSizePerTrade: 15,  // Up from 10
+    maxSizePerTrade: 0,
     maxSlippage: 0.03,
-    minTradeSize: 10,  // Up from 5
+    minTradeSize: 1,
     delay: 500,
     customWallets: [
       '0xc2e7800b5af46e6093872b177b7a5e7f0563be51',
@@ -99,8 +100,8 @@ let CONFIG = {
     enabled: process.env.ARBITRAGE_ENABLED === 'true',
     // 🔴 FIXED: Higher profit threshold for gas fees
     profitThreshold: 0.01,  // Up from 0.001 to 1%
-    minTradeSize: 20,  // Up from 5 to reduce gas impact
-    maxTradeSize: 100,  // Up from 50
+    minTradeSize: 5,
+    maxTradeSize: 0,
     minVolume24h: 5000,
     autoExecute: true,
     enableRebalancer: true,
@@ -113,7 +114,7 @@ let CONFIG = {
   dipArb: {
     enabled: process.env.DIPARB_ENABLED === 'true',
     coins: ['BTC', 'ETH', 'SOL'] as const,
-    shares: 10,
+    shares: 0,
     sumTarget: 0.92,
     autoRotate: true,
     autoExecute: true,
@@ -297,6 +298,42 @@ function snapshotConfig(): BotConfig {
   };
 }
 
+function availableBudgetUsd(): number {
+  if (CONFIG.dryRun) {
+    return Math.max(0, state.paper?.balance ?? CONFIG.capital.totalUsd);
+  }
+  const cash = state.usdcEBalance > 0 ? state.usdcEBalance : state.usdcBalance;
+  return Math.max(0, cash);
+}
+
+function calculatePositionSize(basePct: number): number {
+  if (!CONFIG.risk.enableDynamicSizing) return basePct;
+
+  let size = basePct;
+  if (state.consecutiveLosses > 2) {
+    size *= Math.pow(1 - CONFIG.risk.lossSizingReduction, state.consecutiveLosses - 2);
+  }
+  if (state.consecutiveWins > 3) {
+    size *= 1 + Math.min(state.consecutiveWins - 3, 5) * CONFIG.risk.winSizingIncrease;
+  }
+  size = Math.max(CONFIG.risk.minPositionPct || 0.01, size);
+  size = Math.min(CONFIG.risk.maxPositionPct || CONFIG.capital.maxPerTradePct, size);
+  return size;
+}
+
+function sizeTradeUsd(reservedUsd = 0): number {
+  const available = Math.max(0, availableBudgetUsd() - reservedUsd);
+  if (available < CONFIG.capital.minOrderUsd) return 0;
+  const pct = calculatePositionSize(CONFIG.capital.maxPerTradePct);
+  return Math.min(available, available * pct);
+}
+
+function dipArbShareCount(): number {
+  const usd = sizeTradeUsd();
+  if (usd <= 0) return Math.max(CONFIG.dipArb.shares || 0, 10);
+  return Math.max(10, usd / 0.5);
+}
+
 // 🔴 FIXED: v3.1 Multi-layer risk management
 function canTrade(): boolean {
   // Check if permanently halted
@@ -402,17 +439,23 @@ function recordTrade(profit: number, strategy: string) {
   updateDashboard();
 }
 
-function simulateTrade(profit: number, strategy: string, description: string) {
+function simulateTrade(profit: number, strategy: string, description: string, costUsd = 0) {
   if (!CONFIG.dryRun || !state.paper) return;
 
+  if (costUsd > 0 && state.paper.balance < costUsd) {
+    log('WARN', `Skip ${strategy}: need $${costUsd.toFixed(2)} but only $${state.paper.balance.toFixed(2)} available`);
+    return;
+  }
+
   state.paper.trades++;
+  if (costUsd > 0) {
+    state.paper.balance -= costUsd;
+    state.paper.totalVolume += costUsd;
+  }
   state.paper.pnl += profit;
   state.paper.balance += profit;
 
-  // Log as a special SIMULATION event
-  log('TRADE', `[SIMULATION] ${description} | Est. Profit: $${profit.toFixed(2)}`);
-
-  // Update main PnL so the user sees movement on the dashboard (as requested)
+  log('TRADE', `[SIMULATION] ${description} | Cost: $${costUsd.toFixed(2)} | Est. Profit: $${profit.toFixed(2)}`);
   recordTrade(profit, strategy);
 }
 
@@ -539,13 +582,38 @@ async function initializeSmartMoney(sdk: PolymarketSDK) {
         updateDashboard();
 
         // EXECUTION LOGIC
+        const usd = sizeTradeUsd();
+        if (usd < CONFIG.capital.minOrderUsd) {
+          log('WARN', `Skip copy: available budget $${availableBudgetUsd().toFixed(2)} below min order`);
+          return;
+        }
+
         if (CONFIG.dryRun) {
-          // ... execution
-          simulateTrade(0, 'smartMoney', `Smart Money Copy: ${trade.side} ${trade.size} shares @ ${trade.price}`);
+          simulateTrade(
+            0,
+            'smartMoney',
+            `Smart Money Copy: ${trade.side} $${usd.toFixed(2)} @ ${trade.price} (${trade.marketSlug || 'market'})`,
+            usd
+          );
+        } else if (!trade.tokenId) {
+          log('WARN', 'Skip copy: whale trade has no tokenId');
         } else {
-          // ... live execution
-          // simplified placeholder from original file
-          // ...
+          const slippagePrice = trade.side === 'BUY'
+            ? trade.price * (1 + CONFIG.smartMoney.maxSlippage)
+            : trade.price * (1 - CONFIG.smartMoney.maxSlippage);
+          sdk.tradingService.createMarketOrder({
+            tokenId: trade.tokenId,
+            side: trade.side,
+            amount: usd,
+            price: slippagePrice,
+          }).then((res) => {
+            if (res.success) {
+              log('TRADE', `Copied ${trade.side} $${usd.toFixed(2)} from ${trade.traderAddress.slice(0, 8)}...`);
+              recordTrade(0, 'smartMoney');
+            } else {
+              log('WARN', `Copy failed: ${res.errorMsg}`);
+            }
+          }).catch((err: any) => log('WARN', `Copy error: ${err.message}`));
         }
       });
   }
@@ -567,7 +635,7 @@ async function setupArbitrage(_sdk: PolymarketSDK) {
     privateKey: CONFIG.dryRun ? undefined : process.env.POLYMARKET_PRIVATE_KEY,
     profitThreshold: CONFIG.arbitrage.profitThreshold,
     minTradeSize: CONFIG.arbitrage.minTradeSize,
-    maxTradeSize: CONFIG.arbitrage.maxTradeSize,
+    maxTradeSize: sizeTradeUsd() || CONFIG.capital.totalUsd * CONFIG.capital.maxPerTradePct,
     autoExecute: !CONFIG.dryRun && CONFIG.arbitrage.autoExecute,
     enableRebalancer: !CONFIG.dryRun && CONFIG.arbitrage.enableRebalancer,
     enableLogging: true,
@@ -586,10 +654,11 @@ async function setupArbitrage(_sdk: PolymarketSDK) {
 
     // SIMULATION HOOK
     if (CONFIG.dryRun && opp.profitPercent > 0) {
-      // Conservative estimate: 10% of max size or min size
-      const size = Math.max(CONFIG.arbitrage.minTradeSize, 10);
-      const estimatedProfit = size * (opp.profitPercent / 100);
-      simulateTrade(estimatedProfit, 'arbitrage', `Arb ${opp.market}`);
+      const size = sizeTradeUsd();
+      if (size >= CONFIG.capital.minOrderUsd) {
+        const estimatedProfit = size * (opp.profitPercent / 100);
+        simulateTrade(estimatedProfit, 'arbitrage', `Arb ${opp.market?.name || ''} $${size.toFixed(2)}`, size);
+      }
     }
 
     updateDashboard();
@@ -713,7 +782,7 @@ async function setupDipArb(sdk: PolymarketSDK) {
 
   // Configure the DipArb service
   sdk.dipArb.updateConfig({
-    shares: CONFIG.dipArb.shares,
+    shares: dipArbShareCount(),
     sumTarget: CONFIG.dipArb.sumTarget,
     autoExecute: !CONFIG.dryRun,
     debug: true,
@@ -1060,15 +1129,16 @@ async function setupDirectTrading(sdk: PolymarketSDK) {
               const price = targetToken.price;
 
               if (CONFIG.dryRun) {
-                // Simulate the trade in DRY RUN mode
-                simulateTrade(0, 'direct', `Trend signal: ${market.question?.slice(0, 40)}... → ${trend.toUpperCase()} (Buy ${targetToken.outcome}) @ ${price.toFixed(2)}`);
+                const usd = sizeTradeUsd();
+                if (usd < CONFIG.capital.minOrderUsd) continue;
+                simulateTrade(0, 'direct', `Trend signal: ${market.question?.slice(0, 40)}... → ${trend.toUpperCase()} (Buy ${targetToken.outcome}) @ ${price.toFixed(2)} $${usd.toFixed(2)}`, usd);
                 state.directTrades = (state.directTrades ?? 0) + 1;
                 updateDashboard();
               } else {
-                // Live Mode Execution
-                const amountUsdc = 5; // Fixed small size for testing ($5)
+                const amountUsdc = sizeTradeUsd();
+                if (amountUsdc < CONFIG.capital.minOrderUsd) continue;
 
-                log('SIGNAL', `Executing Trend Trade: ${trend.toUpperCase()} on ${market.question?.slice(0, 30)}...`);
+                log('SIGNAL', `Executing Trend Trade: ${trend.toUpperCase()} on ${market.question?.slice(0, 30)}... $${amountUsdc.toFixed(2)}`);
 
                 sdk.tradingService.createMarketOrder({
                   tokenId: targetToken.tokenId,
@@ -1076,7 +1146,7 @@ async function setupDirectTrading(sdk: PolymarketSDK) {
                   amount: amountUsdc
                 }).then(res => {
                   if (res.success) {
-                    log('TRADE', `✅ Direct Trade: Bought $${amountUsdc} of ${targetToken.outcome} @ ~${price.toFixed(2)}`);
+                    log('TRADE', `✅ Direct Trade: Bought $${amountUsdc.toFixed(2)} of ${targetToken.outcome} @ ~${price.toFixed(2)}`);
                     recordTrade(0, 'direct');
                   } else {
                     log('WARN', `❌ Direct Trade failed: ${res.errorMsg}`);
